@@ -1,0 +1,179 @@
+#!/bin/bash
+
+# get the command (checkout, commit, etc.)
+command=$1
+shift
+
+# function for displaying help message
+function display_help() {
+  echo "gsvn: a wrapper for git-svn that mimics svn command line interface"
+  echo "Usage:"
+  echo "    gsvn command [options]"
+  echo "Commands:"
+  echo "    checkout URL                        - Clone SVN repository"
+  echo "    commit -m 'message'                 - Commit changes to SVN"
+  echo "    commit -m 'message' filename        - Commit specific file to SVN"
+  echo "    up|update                           - Update your branch with the latest from SVN"
+  echo "    add filename                        - Add file(s) to the staging area"
+  echo "    delete filename                     - Remove file(s) from the working tree and index"
+  echo "    log                                 - Show commit logs"
+  echo "    diff                                - Show changes between commits, commit and working tree, etc"
+  echo "    status                              - Show the working tree status"
+  echo "    version                             - Display the SVN revision"
+}
+
+# switch on the command
+case $command in
+  checkout)
+    git svn clone "$@"
+    ;;
+
+  commit)
+    # store the current branch in a variable
+    CURRENT_BRANCH=$(git symbolic-ref --short HEAD)
+    if [ -z "$CURRENT_BRANCH" ]; then
+      echo "Error: Failed to determine the current branch."
+      exit 1
+    fi
+
+    # Stash changes to ensure SVN repository is clean for rebase
+    git stash
+
+    # Switch to the svn-mirror branch and reset it to the latest from SVN
+    git checkout svn-mirror
+    git svn fetch
+    git reset --hard git-svn
+
+    # If no arguments are given, cherry pick the latest commit from CURRENT_BRANCH
+    if [ $# -eq 0 ]; then
+      git cherry-pick "$CURRENT_BRANCH"
+    else
+      # Extract file path and message from arguments
+      FILE_PATH=""
+      MESSAGE=""
+      IS_MESSAGE_NEXT=false
+      for arg in "$@"; do
+        if [ "$IS_MESSAGE_NEXT" = true ]; then
+          MESSAGE=$arg
+          IS_MESSAGE_NEXT=false
+        elif [[ $arg == -m ]]; then
+          IS_MESSAGE_NEXT=true
+        else
+          FILE_PATH=$arg
+        fi
+      done
+      # Checkout the specific file from the 'vlb' branch
+      git checkout stash@{0} -- "$FILE_PATH"
+
+      # Commit the changes
+      git add "$FILE_PATH"
+      git commit -m "$MESSAGE"
+    fi
+
+    # Push the changes to SVN
+    git svn dcommit
+    git push
+
+    # Switch back to the original branch
+    git checkout "$CURRENT_BRANCH"
+
+    # Pop the stash
+    git stash pop
+    gsvn up
+    ;;
+  up | update)
+    git stash
+    # store the current branch in a variable
+    branch=$(git symbolic-ref --short HEAD)
+
+    # if branch is not svn-mirror, then switch to svn-mirror
+    if [ "$branch" != "svn-mirror" ]; then
+      git checkout svn-mirror
+    fi
+
+    # Stash .gitignore if it exists
+    if [ -f ".gitignore" ]; then
+      git stash push .gitignore
+      GIT_IGNORE_STASHED=true
+    fi
+
+    # Rebase svn-mirror branch with SVN
+    git svn rebase
+    git push
+    
+    # Re-apply .gitignore file if it was stashed
+    if [ "$GIT_IGNORE_STASHED" = true ]; then
+      git stash pop
+      # You should add and commit .gitignore file here if needed.
+      git add .gitignore
+      git commit -m "Keep .gitignore file"
+    fi
+
+    # if branch is not svn-mirror, then switch to svn-mirror
+    if [ "$branch" != "svn-mirror" ]; then
+      git checkout "$branch"
+      # Merge svn-mirror into the current branch with message "Merge svn-mirror into <branch-name>"
+      git merge svn-mirror -m "Merge svn-mirror into $branch"
+    fi
+    git push
+    git stash pop
+    ;;
+  add)
+    git add "$@"
+    ;;
+  delete)
+    git rm "$@"
+    ;;
+  log)
+    git log
+    ;;
+  diff)
+    git diff
+    ;;
+  status)
+    git status
+    ;;
+  version)
+    {
+      # if there are a following argument, cd to that directory
+      git stash
+      branch=$(git symbolic-ref --short HEAD)
+
+      # if branch is not svn-mirror, then switch to svn-mirror
+      if [ "$branch" != "svn-mirror" ]; then
+        git checkout svn-mirror
+      fi
+
+      # Stash .gitignore if it exists
+      if [ -f ".gitignore" ]; then
+        git stash push .gitignore
+        GIT_IGNORE_STASHED=true
+      fi
+
+      # Rebase svn-mirror branch with SVN
+      CWD=$(pwd)
+      if [ -n "$1" ]; then
+        cd "$1" || exit
+      fi
+    } >> /dev/null 2>&1
+    git svn find-rev "$(git rev-list --date-order --max-count=1 HEAD)"
+    {
+      cd "$CWD" || exit
+
+      # Re-apply .gitignore file if it was stashed
+      if [ "$GIT_IGNORE_STASHED" = true ]; then
+        git stash pop
+        # You should add and commit .gitignore file here if needed.
+        git add .gitignore
+        git commit -m "Keep .gitignore file"
+      fi
+      if [ "$branch" != "svn-mirror" ]; then
+        git checkout "$branch"
+      fi
+      git stash pop
+    } >> /dev/null 2>&1
+    ;;
+  *)
+    display_help
+    ;;
+esac
