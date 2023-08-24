@@ -78,7 +78,9 @@ case $command in
     git checkout "$CURRENT_BRANCH"
 
     # Pop the stash
-    git stash pop
+    if git stash list | grep -q 'stash@'; then
+      git stash pop
+    fi
     gsvn up
     ;;
   up | update)
@@ -103,7 +105,9 @@ case $command in
     
     # Re-apply .gitignore file if it was stashed
     if [ "$GIT_IGNORE_STASHED" = true ]; then
-      git stash pop
+      if git stash list | grep -q 'stash@'; then
+        git stash pop
+      fi
       # You should add and commit .gitignore file here if needed.
       git add .gitignore
       git commit -m "Keep .gitignore file"
@@ -116,7 +120,9 @@ case $command in
       git merge svn-mirror -m "Merge svn-mirror into $branch"
     fi
     git push
-    git stash pop
+    if git stash list | grep -q 'stash@'; then
+      git stash pop
+    fi
     ;;
   add)
     git add "$@"
@@ -162,7 +168,9 @@ case $command in
 
       # Re-apply .gitignore file if it was stashed
       if [ "$GIT_IGNORE_STASHED" = true ]; then
-        git stash pop
+        if git stash list | grep -q 'stash@'; then
+          git stash pop
+        fi
         # You should add and commit .gitignore file here if needed.
         git add .gitignore
         git commit -m "Keep .gitignore file"
@@ -170,7 +178,9 @@ case $command in
       if [ "$branch" != "svn-mirror" ]; then
         git checkout "$branch"
       fi
-      git stash pop
+      if git stash list | grep -q 'stash@'; then
+        git stash pop
+      fi
     } >> /dev/null 2>&1
     ;;
   *)
